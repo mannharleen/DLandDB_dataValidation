@@ -35,8 +35,8 @@ object validation {
     } else "172.18.20.140"  //default points to production
     //
     val s3path:String = if (args_map("env").mkString(",") == "uat") {
-      "s3://datalake-uat/Fisicien/DMS-only"
-    } else "s3://datalake-prod-env/Fisicien/DMS-only" //default points to production
+      "s3n://datalake-uat/Fisicien/DMS-only"
+    } else "s3n://datalake-prod-env/Fisicien/DMS-only" //default points to production
     //
     val prop = new Properties
     prop.setProperty("user", "LOGMNR_USER")
