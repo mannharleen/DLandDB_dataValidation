@@ -5,8 +5,14 @@ import scala.concurrent.ExecutionContext.Implicits.global
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.SparkSession
+import org.apache.spark.sql.Row
 
 // spark-shell --jars ojdbc6.jar,dlanddb_datavalidation_2.11-0.1.jar
+/*
+  Issues/Enhancements
+  I-  Open- when --tables= is not passed in params, it throws an error
+
+ */
 
 object validation {
   val spark = SparkSession.builder().appName("DLandDBvalidation").getOrCreate()
@@ -89,15 +95,20 @@ object validation {
       var str_result_cnt:String = ""
       var str_result_cnt_dist_key:String = ""
       var str_result_sum_key:String = ""
-      var df_db_schema:StructType = StructType(StructField(" ",StringType,true) :: Nil)
+      var df_db_schema: StructType = StructType(StructField(" ",StringType,true) :: Nil)
       //println("!!! inside f_f-2 " )
       val table_key:String = table_keys(table)
       //println("!!! inside f_f-1 " + s"(select count(distinct($table_key)) from $schema.$table)")
       try {
         df_db_schema = spark.read.jdbc(s"jdbc:oracle:thin:@//$db_ip:1521/FSCLIVE", s"(select * from $schema.$table)",prop).schema
-        df_db_cnt = spark.read.jdbc(s"jdbc:oracle:thin:@//$db_ip:1521/FSCLIVE", s"(select count(*) from $schema.$table)",prop).first.mkString.toDouble.toInt
+        val df_db_values: Array[Row] = spark.read.jdbc(s"jdbc:oracle:thin:@//$db_ip:1521/FSCLIVE", s"(select count(*) as cnt_,count(distinct($table_key)) as cd_, sum($table_key) as s_ from $schema.$table)",prop).collect
+        /*df_db_cnt = spark.read.jdbc(s"jdbc:oracle:thin:@//$db_ip:1521/FSCLIVE", s"(select count(*) from $schema.$table)",prop).first.mkString.toDouble.toInt
         df_db_cnt_dist_key = spark.read.jdbc(s"jdbc:oracle:thin:@//$db_ip:1521/FSCLIVE", s"(select count(distinct($table_key)) as cd_ from $schema.$table)",prop).first.mkString.toDouble.toInt
         df_db_sum_key = BigDecimal(spark.read.jdbc(s"jdbc:oracle:thin:@//$db_ip:1521/FSCLIVE", s"(select sum($table_key) as s_ from $schema.$table)",prop).first.mkString)
+        */
+        df_db_cnt = df_db_values.head(0).asInstanceOf[Long]
+        df_db_cnt_dist_key = df_db_values.head(1).asInstanceOf[Long]
+        df_db_sum_key = df_db_values.head(2).asInstanceOf[BigDecimal]
       }
       catch {
         case e => e.printStackTrace
