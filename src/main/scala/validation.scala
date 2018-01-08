@@ -2,6 +2,7 @@ import scala.util.{Try, Success, Failure}
 import java.util.Properties
 import scala.concurrent._
 import scala.concurrent.ExecutionContext.Implicits.global
+import scala.concurrent.duration._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.functions._
 import org.apache.spark.sql.SparkSession
@@ -14,6 +15,21 @@ import scala.collection.JavaConverters._
 /*
   Issues/Enhancements
   I-  Closed- when --tables= is not passed in params, it throws an error
+
+ */
+/*  The following inputs come from the application.conf file OR from the parameters -Dxx=yy:
+      env
+      username
+      password
+      driver
+      ip
+      port
+      schemas
+      tables
+      table_keys
+      dlpath
+      dlaccesskey
+      dlsecretkey
 
  */
 object validation {
@@ -114,6 +130,7 @@ object validation {
       (ip, port, schemas, tables, table_keys, s3path, s3access_key, s3secret_key)  //default points to production
     }
     val log_dir: String = conf.getString("log.dir")
+    val out_file_handler = scala.tools.nsc.io.File(s"$log_dir/log_dl_db_val_out_${java.util.Calendar.getInstance().getTimeInMillis}.csv").createFile()
     // !!!E-use db_port by passing it to f_f
     // !!! E- help message currently not showing all options
     //
@@ -126,13 +143,11 @@ object validation {
         tables.map(table => {
             //println(s"starting for $table ")
             table_counter += 1
-            f_f(db_ip, db_port, schema, table, table_keys, prop, s3path, s3access_key, s3secret_key, table_counter, log_dir)
+            Await.result(f_f(db_ip, db_port, schema, table, table_keys, prop, s3path, s3access_key, s3secret_key, table_counter, log_dir, out_file_handler), 24 hours)
         })
     })
   }
-  def f_f(db_ip:String, db_port: String, schema: String, table: String, table_keys: Map[String, String], prop:Properties, s3path:String, s3access_key: String, s3secret_key:String, table_counter:Int, log_dir: String) = { //: Future[Int] = Future  {
-    //if (table_counter == 1) println(java.util.Calendar.getInstance.getTime)
-    //val spark = SparkSession.builder().appName("DLandDBvalidation").master("local[*]").getOrCreate()
+  def f_f(db_ip:String, db_port: String, schema: String, table: String, table_keys: Map[String, String], prop:Properties, s3path:String, s3access_key: String, s3secret_key:String, table_counter:Int, log_dir: String, out_file_handler: scala.tools.nsc.io.File) : Future[Int] = Future  {
     val spark = SparkSession.builder().appName("DLandDBvalidation").getOrCreate()
     spark.sparkContext.setLogLevel("ERROR")
     //this code works with both s3n and s3a (s3a is the recommended approach but it is not supported on AWs EMR)
@@ -140,7 +155,7 @@ object validation {
     spark.sparkContext.hadoopConfiguration.set("fs.s3n.awsSecretAccessKey", s3secret_key)
     spark.sparkContext.hadoopConfiguration.set("fs.s3a.awsAccessKeyId", s3access_key)
     spark.sparkContext.hadoopConfiguration.set("fs.s3a.awsSecretAccessKey", s3secret_key)
-    val out_file_handler = scala.tools.nsc.io.File(s"$log_dir/log_dl_db_val_out_${java.util.Calendar.getInstance().getTimeInMillis}.csv").createFile()
+
     println(s"Started - $schema.$table")
     var trying = Try()
     var df_cdc = spark.emptyDataFrame
@@ -210,13 +225,13 @@ object validation {
     //println("!!! inside f_f1")
     //**** DF CDC
     spark.sparkContext.setJobDescription(s"DL Base & CDC data - $schema.$table")
-    trying = Try(spark.read.option("escape","\"").option("multiLine","true").csv(s"$s3path/$schema/$table/2017*"))
+    trying = Try(spark.read.option("escape","\"").option("multiLine","true").csv(s"$s3path/$schema/$table/201*"))
     //df_cdc = spark.emptyDataFrame
     df_cdc_i_cnt = 0
     df_cdc_d_cnt = 0
     trying match {
       case Success(v) => {
-        df_cdc = spark.read.schema(StructType(StructField("I_U_D", StringType, true) +: df_db_schema.fields)).option("escape","\"").option("multiLine","true").csv(s"$s3path/$schema/$table/2017*").cache
+        df_cdc = spark.read.schema(StructType(StructField("I_U_D", StringType, true) +: df_db_schema.fields)).option("escape","\"").option("multiLine","true").csv(s"$s3path/$schema/$table/201*").cache
         df_cdc_i = df_cdc.filter(col("I_U_D") === "I")
         df_cdc_d = df_cdc.filter(col("I_U_D") === "D")
         df_cdc_u = df_cdc.filter(col("I_U_D") === "U")
