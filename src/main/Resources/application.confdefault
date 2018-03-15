@@ -1,0 +1,27 @@
+//prod.db
+prod.db.ip=<>
+prod.db.port=1521
+prod.db.username=<>
+prod.db.password=<>
+prod.db.driver=oracle.jdbc.driver.OracleDriver
+prod.db.schemas=["FSCPHKL"]
+prod.db.tables=["AGEING_CBS", "AGEING_POST",]
+prod.db.tables_keys=[{"AGEING_CBS" : "JOURNALENTRY_ID"}]
+//dev.db
+dev.db.ip=172.18.20.70
+dev.db.port=1521
+dev.db.username=<>
+dev.db.password=<>
+dev.db.driver=oracle.jdbc.driver.OracleDriver
+dev.db.tables=["AGEING_CBS", "AGEING_POST", ]
+dev.db.tables_keys=[{"AGEING_CBS" : "JOURNALENTRY_ID"}, ]
+//prod.dl
+prod.dl.access.key=
+prod.dl.secret.key=
+prod.dl.path="s3n://datalake-prod-env/Fisicien-v1/DMS-only"
+//dev.dl
+dev.dl.access.key=
+dev.dl.secret.key=
+dev.dl.path="s3n://datalake-prod-env/Fisicien/DMS-only"
+//log
+log.dir="./"

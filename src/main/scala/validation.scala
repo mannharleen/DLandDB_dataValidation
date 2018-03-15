@@ -1,16 +1,22 @@
-import scala.util.{Try, Success, Failure}
+import scala.util.{Failure, Success, Try}
 import java.util.Properties
+import scala.sys.process._ //used to execute distcp
 import scala.concurrent._
 import scala.concurrent.ExecutionContext.Implicits.global
 import scala.concurrent.duration._
 import org.apache.spark.sql.types._
 import org.apache.spark.sql.functions._
-import org.apache.spark.sql.SparkSession
-import org.apache.spark.sql.Row
+import org.apache.spark.sql.{DataFrame, Row, SparkSession}
 import com.typesafe.config._
+
 import scala.collection.JavaConverters._
 
-// spark-shell --jars ojdbc6.jar,dlanddb_datavalidation_2.11-0.1.jar
+//    spark-shell --jars ojdbc6.jar,dlanddb_datavalidation_2.11-0.1.jar --driver-cores 7 --executor-cores 7 --executor-memory 7G --driver-memory 7G --packages com.typesafe:config:1.3.1
+//  spark-submit --master yarn --deploy-mode cluster --class validation --name app123 --packages com.typesafe:config:1.3.1 --jars ojdbc6.jar --executor-cores 8 --driver-memory 8G --executor-cores 8 --executor-memory 6G dlanddb_datavalidation_2.11-0.1.jar --env=prod --schemas=FSCPHKL
+//  spark-submit --master yarn --deploy-mode client --class validation --name app123 --packages com.typesafe:config:1.3.1 --jars ojdbc6.jar --executor-cores 8 --driver-memory 8G --executor-cores 8 --executor-memory 6G dlanddb_datavalidation_2.11-0.1.jar --env=prod --schemas=FSCPHKL --tables=AGEING_CBS
+//     sudo vi /etc/hadoop/conf/capacity-scheduler.xml and change the resource calculator
+//        initctl list
+//        stop hadoop-yarn-resourcemanager.....
 //  -Dspark.master=local[*], -Dconfig.file=c:\\application.conf
 /*
   Issues/Enhancements
@@ -130,25 +136,48 @@ object validation {
       (ip, port, schemas, tables, table_keys, s3path, s3access_key, s3secret_key)  //default points to production
     }
     val log_dir: String = conf.getString("log.dir")
-    val out_file_handler = scala.tools.nsc.io.File(s"$log_dir/log_dl_db_val_out_${java.util.Calendar.getInstance().getTimeInMillis}.csv").createFile()
+    val loc = new java.io.File("").getAbsolutePath
+    //
+    println(s"<> INFO: Writing log file to ${java.net.InetAddress.getLocalHost.getHostAddress} at location $loc with file name $log_dir/log_dl_db_val_out_...")
+    val log_file_name =  s"log_dl_db_val_out_${java.util.Calendar.getInstance().getTimeInMillis}"
+    val log_file_name_w_path = s"/home/hadoop/$log_file_name"
+    println(s"<> INFO: log file location $log_file_name_w_path")
+    val out_file_handler = scala.tools.nsc.io.File(log_file_name_w_path).createFile()
+    //val out_file_handler = scala.tools.nsc.io.File("c:\\a").createFile()
+    println("<> INFO: writing log file to local and s3")
     // !!!E-use db_port by passing it to f_f
     // !!! E- help message currently not showing all options
     //
     //println(db_ip, db_port, schemas, tables, table_keys, s3path, prop.getProperty("user"))
-    println("*** starting job <> <> ***")
+    println("*** starting job ***")
     //
-
+    //    val f_f_seq = Future.sequence()
+    //tables.foreach(x=> println(x))
+    var tables_futures = new scala.collection.mutable.ListBuffer[Future[Int]]
     schemas.map(schema => {
-        var table_counter: Int = 0
-        tables.map(table => {
-            //println(s"starting for $table ")
-            table_counter += 1
-            Await.result(f_f(db_ip, db_port, schema, table, table_keys, prop, s3path, s3access_key, s3secret_key, table_counter, log_dir, out_file_handler), 24 hours)
+      var table_counter: Int = 0
+        tables.foreach(table => {
+          //println(s"starting for $table ")
+          table_counter += 1
+          //Await.result(f_f(db_ip, db_port, schema, table, table_keys, prop, s3path, s3access_key, s3secret_key, table_counter, log_dir, out_file_handler, log_file_name, log_file_name_w_path), 24 hours)
+          //val f_f_result = f_f(db_ip, db_port, schema, table, table_keys, prop, s3path, s3access_key, s3secret_key, table_counter, log_dir, out_file_handler, log_file_name, log_file_name_w_path)
+          //Await.result(f_f_result, 24 hours)
+          val ret = Future(f_f(db_ip, db_port, schema, table, table_keys, prop, s3path, s3access_key, s3secret_key, table_counter, log_dir, out_file_handler, log_file_name, log_file_name_w_path))
+          //val ret  = () => f_f(db_ip, db_port, schema, table, table_keys, prop, s3path, s3access_key, s3secret_key, table_counter, log_dir, out_file_handler, log_file_name, log_file_name_w_path)
+          tables_futures += ret
         })
     })
+    //tables_futures.foreach(x => println(x))
+    val all_f_f = Future.sequence(tables_futures)
+    Await.result(all_f_f, 24 hours )
+
+    all_f_f onComplete {
+      case Success(s) => println("complete all"); s"aws s3 cp /home/hadoop/$log_file_name s3://modharleen/dlanddbvalidation/$log_file_name".!
+    }
   }
-  def f_f(db_ip:String, db_port: String, schema: String, table: String, table_keys: Map[String, String], prop:Properties, s3path:String, s3access_key: String, s3secret_key:String, table_counter:Int, log_dir: String, out_file_handler: scala.tools.nsc.io.File) : Future[Int] = Future  {
+  def f_f(db_ip:String, db_port: String, schema: String, table: String, table_keys: Map[String, String], prop:Properties, s3path:String, s3access_key: String, s3secret_key:String, table_counter:Int, log_dir: String, out_file_handler: scala.tools.nsc.io.File, log_file_name: String,  log_file_name_w_path: String) = { //} : Future[Int] = Future  {
     val spark = SparkSession.builder().appName("DLandDBvalidation").getOrCreate()
+    import spark.implicits._
     spark.sparkContext.setLogLevel("ERROR")
     //this code works with both s3n and s3a (s3a is the recommended approach but it is not supported on AWs EMR)
     spark.sparkContext.hadoopConfiguration.set("fs.s3n.awsAccessKeyId", s3access_key)
@@ -312,10 +341,21 @@ object validation {
       message2 = s"**DistinctKeyCount**,$schema,$table,$table_key," + "DL||DB,,,," + df_dl_cnt_dist_key + ",||," + ", \t\t >> ," + "Warning: No PK detected" + df_db_cnt_dist_key
       message3 = s"**sumKey**,$schema,$table,$table_key," + "DL||DB,,,," + df_dl_sum_key + ",||," + ", \t\t >> ," + "Warning: No PK detected" + df_db_sum_key
     }
-    val arr_print_results:Array[String] = Array(message1, message2, message3)
+    var arr_print_results: scala.collection.mutable.ArrayBuffer[String] = scala.collection.mutable.ArrayBuffer(message1)
+    if (!message2.isEmpty) arr_print_results += message2
+    if (!message2.isEmpty) arr_print_results += message3
+
+    //skipping writing the local file
     out_file_handler.appendAll(arr_print_results.mkString("\n")+"\n")
+    //instead writing to DF that writes to hdfs and alter s3
+    //val df_log_print_results: DataFrame = spark.sparkContext.parallelize(arr_print_results).toDF("_c0")
     //println("!!! inside f_f3")
+    //df_log_print_results.show()
+    //println("<><>" + df_log_print_results.rdd.getNumPartitions)
     if (table_counter == table_keys.size) println("**END****END****END****END**, "+println(java.util.Calendar.getInstance.getTime))
+    //df_log_print_results.where(!col("_c0").isNull).coalesce(1).write.mode("append").csv(s"hdfs:///$log_file_name_w_path")
+    //s"hadoop distcp hdfs:///$log_file_name_w_path s3n://modharleen/dlanddbvalidation/$log_file_name_w_path".!
+    //s"aws s3 cp /home/hadoop/$log_file_name s3://modharleen/dlanddbvalidation/$log_file_name".!
     1
   }
 }
